@@ -1,15 +1,33 @@
 # easymp
 
-古い Epson EasyMP プロジェクターを Bun / Node.js から操作する TypeScript ライブラリです。電源・状態制御には ESC/VP.net、画像表示には EasyMP の EEMP/EPRD プロトコルを使います。
+![CI](https://github.com/okakatsuo/easymp/actions/workflows/ci.yml/badge.svg)
+![npm](https://img.shields.io/npm/v/easymp)
+![License](https://img.shields.io/npm/l/easymp)
+
+古い Epson EasyMP プロジェクターを Bun / Node.js から操作する非公式TypeScriptライブラリです。電源・状態制御には ESC/VP.net、画像表示には EasyMP の EEMP/EPRD プロトコルを使います。
+
+> [!IMPORTANT]
+> このプロジェクトはEpsonによる公式製品ではなく、Epsonとの提携・承認関係もありません。Epson、EasyMPおよび関連する名称は各権利者に帰属します。
 
 現時点の映像プロトコルは **EMP-1715 で実機確認した通信を基準**にしています。ESC/VP.net 制御は同プロトコル対応機で利用できますが、映像表示は他機種では検証が必要です。
 
 ## セットアップ
 
+ライブラリとして利用する場合：
+
 ```bash
+bun add easymp
+# または
+npm install easymp
+```
+
+開発する場合：
+
+```bash
+git clone https://github.com/okakatsuo/easymp.git
+cd easymp
 bun install
-bun run check
-bun test
+bun run verify
 ```
 
 ## 高レベル API
@@ -90,3 +108,25 @@ bun run example:image -- ./dashboard.png
 - 映像接続要求には EMP-1715 のキャプチャから得た未解析フィールドが残っています。
 - 同一マシン上では TCP/UDP 3620 を使用する EasyMP セッションを同時に複数開始できません。
 - プロジェクター実機を使う統合テストは自動テストに含まれません。パケット生成・画像処理は `bun test` で検証できます。
+
+## 対応環境
+
+- Bun 1.3以降
+- Node.js 20.9以降（ES Modules）
+- EMP-1715：ESC/VP.net制御とEasyMP画像表示を実機確認済み
+- その他のESC/VP.net対応機：制御APIは利用できる可能性がありますが未検証
+
+## 開発とリリース
+
+変更を送る前に次を実行してください。
+
+```bash
+bun run verify
+bun pm pack --dry-run
+```
+
+リリースは[Semantic Versioning](https://semver.org/)に従います。GitHub Releaseを公開すると、npm Trusted Publishingを設定済みのリポジトリでは対応するバージョンがnpmへ公開されます。変更履歴は [CHANGELOG.md](./CHANGELOG.md) を参照してください。
+
+## ライセンス
+
+[MIT](./LICENSE)
