@@ -24,4 +24,14 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run verify
       - run: npm install --global npm@latest
-      - run: npm publish --access public
+      - name: Publish if this version is not on npm
+        shell: bash
+        run: |
+          package_name=$(node -p "require('./package.json').name")
+          package_version=$(node -p "require('./package.json').version")
+
+          if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
+            echo "${package_name}@${package_version} is already published"
+          else
+            npm publish --access public
+          fi
