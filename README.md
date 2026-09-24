@@ -44,6 +44,11 @@ await projector.power.on();
 console.log(await projector.status.power());
 console.log(await projector.status.lampHours());
 
+await projector.audio.setVolume(10);       // EMP-1715: 0-20
+await projector.audio.setOutput("internal");
+await projector.audio.mute();              // EMP-1715では音声のみでなくA/Vミュート
+await projector.audio.unmute();
+
 await projector.display.connect();
 
 try {
@@ -72,7 +77,11 @@ try {
 ```ts
 import { EscVpClient } from "easymp";
 
-const control = new EscVpClient({ host: "192.168.1.82" });
+const control = new EscVpClient({
+  host: "192.168.1.82",
+  // 複数 NIC がある場合はプロジェクター側の LAN アドレスを指定
+  localAddress: "192.168.1.17",
+});
 
 await control.command("PWR ON");
 console.log(await control.query("PWR")); // "01"
@@ -88,6 +97,13 @@ bun run dev
 # 電源状態を表示。引数に on / off も指定可能
 bun run example:power -- on
 
+# 音声状態、音量、出力先、A/Vミュートを操作
+bun run example:audio -- status
+bun run example:audio -- volume 10
+bun run example:audio -- output internal
+bun run example:audio -- mute
+bun run example:audio -- unmute
+
 # 任意画像を全面表示
 bun run example:image -- ./dashboard.png
 ```
@@ -98,6 +114,7 @@ bun run example:image -- ./dashboard.png
 
 - `EpsonProjector`: 電源、状態、表示をまとめた高レベル API
 - `EscVpClient`: TCP 3629 の ESC/VP.net コマンド
+- `ProjectorAudio`: 音量、内蔵／外部音声出力、A/Vミュート制御
 - `EasyMPSession`: UDP/TCP 3620 の EEMP セッション
 - `EasyMPVideo`: TCP 3621 の映像チャネル
 - `createEprdPacket`: JPEG タイルから EPRD パケットを生成
@@ -108,6 +125,7 @@ bun run example:image -- ./dashboard.png
 - 映像接続要求には EMP-1715 のキャプチャから得た未解析フィールドが残っています。
 - 同一マシン上では TCP/UDP 3620 を使用する EasyMP セッションを同時に複数開始できません。
 - プロジェクター実機を使う統合テストは自動テストに含まれません。パケット生成・画像処理は `bun test` で検証できます。
+- 通常のLAN画面投写では音声を転送できません。ネットワーク音声はEasyMPの動画再生モード専用で、現在プロトコル解析中です。確認済みの制約とキャプチャ手順は [`docs/audio-protocol.md`](./docs/audio-protocol.md) に記録しています。
 
 ## 対応環境
 

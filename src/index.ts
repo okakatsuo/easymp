@@ -45,10 +45,12 @@ export {
 } from "./image/frame";
 export {
   EpsonProjector,
+  ProjectorAudio,
   ProjectorPower,
   ProjectorStatus,
   powerStateFromCode,
   type EpsonProjectorOptions,
+  type ProjectorAudioOutput,
   type ProjectorPowerState,
   type ProjectorPowerStatus,
 } from "./projector";

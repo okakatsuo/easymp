@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- EMP-1715 volume, audio output, and A/V mute controls through ESC/VP.net.
+- Optional local-address binding for ESC/VP.net in multi-interface environments.
+
 ## [0.1.0] - 2026-09-24
 
 ### Added

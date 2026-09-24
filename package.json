@@ -16,6 +16,7 @@
   },
   "files": [
     "dist",
+    "docs",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
@@ -56,6 +57,7 @@
     "verify": "bun run check && bun test && bun run build && bun run test:package",
     "prepack": "bun run verify",
     "dev": "bun run examples/red-square.ts",
+    "example:audio": "bun run examples/audio.ts",
     "example:image": "bun run examples/image.ts",
     "example:power": "bun run examples/power.ts"
   },

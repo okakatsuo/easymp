@@ -13,6 +13,8 @@ export interface EscVpClientOptions {
   host: string;
   port?: number;
   timeout?: number;
+  /** Local IPv4 address to bind when more than one network interface is active. */
+  localAddress?: string;
 }
 
 export class EscVpError extends Error {
@@ -30,11 +32,13 @@ export class EscVpClient {
   readonly host: string;
   readonly port: number;
   readonly timeout: number;
+  readonly localAddress?: string;
 
   constructor(options: EscVpClientOptions) {
     this.host = options.host;
     this.port = options.port ?? ESCVP_PORT;
     this.timeout = options.timeout ?? 5_000;
+    this.localAddress = options.localAddress;
   }
 
   async command(command: string): Promise<string> {
@@ -42,7 +46,11 @@ export class EscVpClient {
       throw new EscVpError("ESC/VP command must be one line of printable ASCII", command);
     }
 
-    const socket = net.createConnection({ host: this.host, port: this.port });
+    const socket = net.createConnection({
+      host: this.host,
+      port: this.port,
+      localAddress: this.localAddress,
+    });
     socket.setNoDelay(true);
 
     try {
