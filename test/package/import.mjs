@@ -1,4 +1,10 @@
-import { EpsonProjector, ProjectorAudio, encodeEasyMPLength } from "easymp";
+import {
+  EASYMP_MOVIE_PORT,
+  EasyMPMovie,
+  EpsonProjector,
+  ProjectorAudio,
+  encodeEasyMPLength,
+} from "easymp";
 
 if (typeof EpsonProjector !== "function") {
   throw new Error("EpsonProjector is missing from the package exports");
@@ -6,6 +12,14 @@ if (typeof EpsonProjector !== "function") {
 
 if (typeof ProjectorAudio !== "function") {
   throw new Error("ProjectorAudio is missing from the package exports");
+}
+
+if (typeof EasyMPMovie !== "function") {
+  throw new Error("EasyMPMovie is missing from the package exports");
+}
+
+if (EASYMP_MOVIE_PORT !== 50020) {
+  throw new Error("Unexpected EasyMP movie port");
 }
 
 if (encodeEasyMPLength(128).toString("hex") !== "90808100") {

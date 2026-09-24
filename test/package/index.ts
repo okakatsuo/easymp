@@ -1,5 +1,6 @@
 import {
   EpsonProjector,
+  EasyMPMovie,
   ProjectorAudio,
   type EpsonProjectorOptions,
   type ProjectorAudioOutput,
@@ -14,7 +15,9 @@ const options: EpsonProjectorOptions = {
 const projector = new EpsonProjector(options);
 const status: Promise<ProjectorPowerStatus> = projector.status.power();
 const audio: ProjectorAudio = projector.audio;
+const movie: EasyMPMovie = projector.movie;
 const output: Promise<ProjectorAudioOutput> = audio.output();
 
 void status;
 void output;
+void movie;

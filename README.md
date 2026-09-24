@@ -72,6 +72,28 @@ try {
 
 `localAddress` はプロジェクターと同じサブネットの IPv4 を自動判定します。EasyMP は UDP 3620 で接続要求を送り、そのアドレスの TCP 3620 へ折り返し接続を受けます。複数 NIC や特殊なルーティングで誤判定される場合は、Tailscale などの仮想 NIC ではなくプロジェクターと同じネットワーク上のアドレスを明示してください。
 
+## 音声付き動画を再生する
+
+EasyMP の動画再生モードでは、`ffmpeg` を使って入力ファイルを EMP-1715 用の MPEG-TS に変換しながら送信します。映像・音声とも EMP-1715 実機で確認済みです。`play()` は再生終了まで待機します。
+
+```ts
+import { EpsonProjector } from "easymp";
+
+const projector = new EpsonProjector({
+  host: "192.168.1.82",
+  localAddress: "192.168.1.17",
+  // ffmpegPath: "C:/tools/ffmpeg/bin/ffmpeg.exe",
+});
+
+try {
+  await projector.movie.play("./movie.mpg");
+} finally {
+  await projector.close();
+}
+```
+
+動画再生と通常の画像投写は同じ EasyMP セッション用ポートを使うため、同時には実行できません。変換済みの対応 MPEG-TS は `playTransportStream()` で直接送信できます。
+
 ## 電源だけ操作する
 
 ```ts
@@ -106,6 +128,9 @@ bun run example:audio -- unmute
 
 # 任意画像を全面表示
 bun run example:image -- ./dashboard.png
+
+# ffmpegで変換しながら音声付き動画を再生
+bun run example:movie -- ./movie.mpg
 ```
 
 接続先はサンプル内の既定値を変更するか、`EASYMP_HOST` と `EASYMP_LOCAL_ADDRESS` を設定します。
@@ -116,6 +141,7 @@ bun run example:image -- ./dashboard.png
 - `EscVpClient`: TCP 3629 の ESC/VP.net コマンド
 - `ProjectorAudio`: 音量、内蔵／外部音声出力、A/Vミュート制御
 - `EasyMPSession`: UDP/TCP 3620 の EEMP セッション
+- `EasyMPMovie`: 動画再生モードの折り返しHTTP配信とMPEG-TS変換
 - `EasyMPVideo`: TCP 3621 の映像チャネル
 - `createEprdPacket`: JPEG タイルから EPRD パケットを生成
 - `encodeFrame`: 画像のリサイズ、タイル分割、差分検出、JPEG 化
@@ -125,13 +151,14 @@ bun run example:image -- ./dashboard.png
 - 映像接続要求には EMP-1715 のキャプチャから得た未解析フィールドが残っています。
 - 同一マシン上では TCP/UDP 3620 を使用する EasyMP セッションを同時に複数開始できません。
 - プロジェクター実機を使う統合テストは自動テストに含まれません。パケット生成・画像処理は `bun test` で検証できます。
-- 通常のLAN画面投写では音声を転送できません。ネットワーク音声はEasyMPの動画再生モード専用で、現在プロトコル解析中です。確認済みの制約とキャプチャ手順は [`docs/audio-protocol.md`](./docs/audio-protocol.md) に記録しています。
+- 通常のLAN画面投写では音声を転送できません。ネットワーク音声はEasyMPの動画再生モード専用です。
+- 動画再生には別途 `ffmpeg` が必要です。現在の変換プロファイルと通信手順は EMP-1715 のキャプチャから再現しており、他機種では未検証です。解析結果は [`docs/audio-protocol.md`](./docs/audio-protocol.md) に記録しています。
 
 ## 対応環境
 
 - Bun 1.3以降
 - Node.js 20.9以降（ES Modules）
-- EMP-1715：ESC/VP.net制御とEasyMP画像表示を実機確認済み
+- EMP-1715：ESC/VP.net制御、EasyMP画像表示、音声付き動画再生を実機確認済み
 - その他のESC/VP.net対応機：制御APIは利用できる可能性がありますが未検証
 
 ## 開発とリリース

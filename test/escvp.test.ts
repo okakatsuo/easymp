@@ -12,6 +12,11 @@ afterEach(async () => {
 });
 
 describe("EscVpClient", () => {
+  test("uses the complete 16-byte ESC/VP.net handshake", () => {
+    expect(ESCVP_HANDSHAKE.length).toBe(16);
+    expect(ESCVP_HANDSHAKE.subarray(0, 10).toString("ascii")).toBe("ESC/VP.net");
+  });
+
   test("performs the handshake and parses a command response", async () => {
     const received: Buffer[] = [];
     const server = net.createServer((socket) => {

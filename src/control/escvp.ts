@@ -4,7 +4,7 @@ import { withTimeout } from "../utils/async";
 
 export const ESCVP_PORT = 3629;
 export const ESCVP_HANDSHAKE = Buffer.from(
-  "45 53 43 2f 56 50 2e 6e 65 74 10 03 00 00 00 00",
+  "4553432f56502e6e6574100300000000",
   "hex",
 );
 const ESCVP_HANDSHAKE_MAGIC = Buffer.from("ESC/VP.net", "ascii");
@@ -41,7 +41,7 @@ export class EscVpClient {
     this.localAddress = options.localAddress;
   }
 
-  async command(command: string): Promise<string> {
+  async command(command: string, responseTimeout = this.timeout): Promise<string> {
     if (!/^[\x20-\x7e]+$/.test(command) || command.includes("\r") || command.includes("\n")) {
       throw new EscVpError("ESC/VP command must be one line of printable ASCII", command);
     }
@@ -73,7 +73,11 @@ export class EscVpClient {
         );
       }
 
-      const responsePromise = this.read(socket, (data) => data.includes(0x3a));
+      const responsePromise = this.read(
+        socket,
+        (data) => data.includes(0x3a),
+        responseTimeout,
+      );
       await this.write(socket, Buffer.from(`${command}\r`, "ascii"));
       const response = parseEscVpResponse(await responsePromise);
 
@@ -107,6 +111,7 @@ export class EscVpClient {
   private read(
     socket: net.Socket,
     complete: (data: Buffer) => boolean,
+    timeout = this.timeout,
   ): Promise<Buffer> {
     return withTimeout(
       new Promise<Buffer>((resolve, reject) => {
@@ -138,7 +143,7 @@ export class EscVpClient {
         socket.once("error", onError);
         socket.once("end", onEnd);
       }),
-      this.timeout,
+      timeout,
       "Timed out waiting for an ESC/VP.net response",
     );
   }

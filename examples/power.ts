@@ -5,7 +5,12 @@ const projector = new EpsonProjector({
   localAddress: process.env.EASYMP_LOCAL_ADDRESS ?? "192.168.1.17",
 });
 
-console.log(await projector.status.power());
-
-if (process.argv[2] === "on") await projector.power.on();
-if (process.argv[2] === "off") await projector.power.off();
+if (process.argv[2] === "on") {
+  await projector.power.on();
+  console.log("Power-on command completed");
+} else if (process.argv[2] === "off") {
+  await projector.power.off();
+  console.log("Power-off command completed");
+} else {
+  console.log(await projector.status.power());
+}

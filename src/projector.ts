@@ -1,8 +1,11 @@
 import { EscVpClient } from "./control/escvp";
 import { EasyMPDisplay, type EasyMPDisplayOptions } from "./easymp/display";
+import { EasyMPMovie } from "./easymp/movie";
 
 export interface EpsonProjectorOptions extends EasyMPDisplayOptions {
   controlPort?: number;
+  movieServerPort?: number;
+  ffmpegPath?: string;
 }
 
 export type ProjectorPowerState =
@@ -22,6 +25,7 @@ export type ProjectorAudioOutput = "internal" | "external" | "unknown";
 export class EpsonProjector {
   readonly control: EscVpClient;
   readonly display: EasyMPDisplay;
+  readonly movie: EasyMPMovie;
   readonly power: ProjectorPower;
   readonly status: ProjectorStatus;
   readonly audio: ProjectorAudio;
@@ -34,6 +38,11 @@ export class EpsonProjector {
       localAddress: options.localAddress,
     });
     this.display = new EasyMPDisplay(options);
+    this.movie = new EasyMPMovie({
+      ...options,
+      serverPort: options.movieServerPort,
+      ffmpegPath: options.ffmpegPath,
+    });
     this.power = new ProjectorPower(this.control);
     this.status = new ProjectorStatus(this.control);
     this.audio = new ProjectorAudio(this.control);
@@ -48,6 +57,7 @@ export class EpsonProjector {
   }
 
   async close(): Promise<void> {
+    await this.movie.stop();
     await this.display.disconnect();
   }
 }
@@ -107,11 +117,11 @@ export class ProjectorPower {
   constructor(private readonly client: EscVpClient) {}
 
   async on(): Promise<void> {
-    await this.client.command("PWR ON");
+    await this.client.command("PWR ON", 110_000);
   }
 
   async off(): Promise<void> {
-    await this.client.command("PWR OFF");
+    await this.client.command("PWR OFF", 20_000);
   }
 }
 

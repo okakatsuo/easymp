@@ -24,8 +24,19 @@ export {
   EasyMPSession,
   createConnectPacket,
   createControlPacket,
+  createDiscoveryPacket,
+  createMovieStartPacket,
   type EasyMPSessionOptions,
 } from "./easymp/session";
+export {
+  EASYMP_MOVIE_HTTP_RESPONSE,
+  EASYMP_MOVIE_PORT,
+  EasyMPMovie,
+  createEasyMPFfmpegArgs,
+  type EasyMPMovieOptions,
+  type EasyMPMoviePlayOptions,
+  type EasyMPTransportStreamInput,
+} from "./easymp/movie";
 export {
   EASYMP_VIDEO_PORT,
   EasyMPVideo,

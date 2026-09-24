@@ -10,20 +10,47 @@ const EEMP_MAGIC = Buffer.from("EEMP0100", "ascii");
 export function createControlPacket(
   localAddress: string,
   type: number,
+  payload: Buffer = Buffer.alloc(0),
 ): Buffer {
   if (!Number.isInteger(type) || type < 0 || type > 0xff) {
     throw new RangeError("EasyMP control packet type must be a byte");
   }
 
-  return Buffer.concat([
-    EEMP_MAGIC,
-    ipv4ToBuffer(localAddress),
-    Buffer.from([type, 0, 0, 0]),
-    Buffer.alloc(4),
-  ]);
+  const header = Buffer.alloc(20);
+  EEMP_MAGIC.copy(header, 0);
+  ipv4ToBuffer(localAddress).copy(header, 8);
+  header[12] = type;
+  header.writeUInt32LE(payload.length, 16);
+  return Buffer.concat([header, payload]);
 }
 
-export function createConnectPacket(localAddress: string): Buffer {
+export function createMovieStartPacket(
+  localAddress: string,
+  port: number,
+): Buffer {
+  if (!Number.isInteger(port) || port < 1 || port > 0xffff) {
+    throw new RangeError("EasyMP movie server port must be from 1 to 65535");
+  }
+
+  const payload = Buffer.alloc(48);
+  ipv4ToBuffer(localAddress).copy(payload, 4);
+  payload.writeUInt16BE(port, 8);
+  return createControlPacket(localAddress, 0x13, payload);
+}
+
+export function createDiscoveryPacket(localAddress: string, direct = false): Buffer {
+  return createControlPacket(localAddress, direct ? 0x02 : 0x01, Buffer.alloc(48));
+}
+
+export function createConnectPacket(
+  localAddress: string,
+  projectorAddress: string,
+  projectorId: Buffer = Buffer.from("4879da83", "hex"),
+): Buffer {
+  if (projectorId.length !== 4) {
+    throw new RangeError("EasyMP projector ID must be exactly four bytes");
+  }
+
   // Captured from and verified against an EMP-1715. Several fields remain
   // undocumented, so the known-good body stays byte-for-byte compatible.
   const packet = Buffer.from(
@@ -41,12 +68,15 @@ export function createConnectPacket(localAddress: string): Buffer {
       "00 08 10 00",
       "00 00 00 00 00 00 00 00",
       "48 79 da 83",
-      "00 00 00 00 00 00",
+      "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "c0 a8 01 52",
     ].join("").replaceAll(" ", ""),
     "hex",
   );
 
   ipv4ToBuffer(localAddress).copy(packet, 8);
+  projectorId.copy(packet, 70);
+  ipv4ToBuffer(projectorAddress).copy(packet, packet.length - 4);
   return packet;
 }
 
@@ -111,6 +141,9 @@ export class EasyMPSession {
         `Timed out binding UDP ${this.localAddress}:${this.port}`,
       );
 
+      const discovery = await this.discover();
+      const projectorId = discovery?.subarray(70, 74);
+
       const connectionPromise = withTimeout(
         new Promise<net.Socket>((resolve, reject) => {
           this.server!.once("connection", resolve);
@@ -122,7 +155,7 @@ export class EasyMPSession {
 
       await new Promise<void>((resolve, reject) => {
         this.udp!.send(
-          createConnectPacket(this.localAddress),
+          createConnectPacket(this.localAddress, this.host, projectorId),
           this.port,
           this.host,
           (error) => error ? reject(error) : resolve(),
@@ -139,7 +172,9 @@ export class EasyMPSession {
         throw new Error(`Unexpected EasyMP response: ${response.toString("hex")}`);
       }
 
-      const interval = this.options.keepAliveInterval ?? 4_000;
+      await this.sendControl(0x0a);
+
+      const interval = this.options.keepAliveInterval ?? 5_000;
       if (!Number.isFinite(interval) || interval <= 0) {
         throw new RangeError("keepAliveInterval must be greater than zero");
       }
@@ -174,6 +209,73 @@ export class EasyMPSession {
     }
 
     await this.closeResources();
+  }
+
+  async sendControl(type: number, payload: Buffer = Buffer.alloc(0)): Promise<void> {
+    const control = this.control;
+    if (!control || control.destroyed) {
+      throw new Error("EasyMP session is not connected");
+    }
+
+    await withTimeout(
+      new Promise<void>((resolve, reject) => {
+        control.write(
+          createControlPacket(this.localAddress, type, payload),
+          (error) => error ? reject(error) : resolve(),
+        );
+      }),
+      this.timeout,
+      "Timed out sending EasyMP control data",
+    );
+  }
+
+  private async discover(): Promise<Buffer | undefined> {
+    const udp = this.udp!;
+    udp.setBroadcast(true);
+    const subnetBroadcast = this.localAddress.replace(/\d+$/, "255");
+    let onMessage: ((message: Buffer, remote: dgram.RemoteInfo) => void) | undefined;
+
+    const response = new Promise<Buffer>((resolve) => {
+      onMessage = (message, remote) => {
+        if (
+          remote.address === this.host
+          && message.length >= 74
+          && message.subarray(0, 8).equals(EEMP_MAGIC)
+          && message[12] === 0x03
+        ) {
+          resolve(message);
+        }
+      };
+      udp.on("message", onMessage);
+    });
+
+    try {
+      for (let attempt = 0; attempt < 7; attempt += 1) {
+        for (const [destination, type] of [
+          [this.host, 0x02],
+          [subnetBroadcast, 0x01],
+          ["255.255.255.255", 0x01],
+        ] as const) {
+          await new Promise<void>((resolve, reject) => {
+            udp.send(
+              createDiscoveryPacket(this.localAddress, type === 0x02),
+              this.port,
+              destination,
+              (error) => error ? reject(error) : resolve(),
+            );
+          });
+        }
+        if (attempt < 6) await delay(100);
+      }
+
+      return await withTimeout(
+        response,
+        Math.min(this.timeout, 2_000),
+        `Projector ${this.host} did not answer EasyMP discovery`,
+      ).catch(() => undefined);
+    } finally {
+      if (onMessage) udp.off("message", onMessage);
+    }
   }
 
   private readOnce(socket: net.Socket): Promise<Buffer> {
