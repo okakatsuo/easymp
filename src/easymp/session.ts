@@ -1,11 +1,13 @@
 import dgram from "node:dgram";
 import net from "node:net";
 
-import { delay, withTimeout } from "../utils/async";
+import { withTimeout } from "../utils/async";
 import { ipv4ToBuffer } from "../utils/ip";
+import { subnetBroadcast } from "../utils/network";
 
 export const EASYMP_CONTROL_PORT = 3620;
 const EEMP_MAGIC = Buffer.from("EEMP0100", "ascii");
+const EEMP_HEADER_SIZE = 20;
 
 export function createControlPacket(
   localAddress: string,
@@ -16,7 +18,7 @@ export function createControlPacket(
     throw new RangeError("EasyMP control packet type must be a byte");
   }
 
-  const header = Buffer.alloc(20);
+  const header = Buffer.alloc(EEMP_HEADER_SIZE);
   EEMP_MAGIC.copy(header, 0);
   ipv4ToBuffer(localAddress).copy(header, 8);
   header[12] = type;
@@ -93,7 +95,9 @@ export class EasyMPSession {
   private udp?: dgram.Socket;
   private control?: net.Socket;
   private keepAlive?: ReturnType<typeof setInterval>;
-  private connecting = false;
+  private connecting?: Promise<void>;
+  private disconnecting?: Promise<void>;
+  private ready = false;
 
   readonly host: string;
   readonly localAddress: string;
@@ -111,182 +115,200 @@ export class EasyMPSession {
   }
 
   get connected(): boolean {
-    return Boolean(this.control && !this.control.destroyed);
+    return Boolean(this.ready && this.control && !this.control.destroyed);
   }
 
-  async connect(): Promise<void> {
-    if (this.connected) return;
-    if (this.connecting) throw new Error("EasyMP session is already connecting");
+  connect(): Promise<void> {
+    if (this.disconnecting) return this.disconnecting.then(() => this.connect());
+    if (this.connecting) return this.connecting;
+    if (this.connected) return Promise.resolve();
 
-    this.connecting = true;
+    this.connecting = this.open().finally(() => {
+      this.connecting = undefined;
+    });
+    return this.connecting;
+  }
+
+  disconnect(): Promise<void> {
+    if (this.disconnecting) return this.disconnecting;
+
+    this.disconnecting = this.close().finally(() => {
+      this.disconnecting = undefined;
+    });
+    return this.disconnecting;
+  }
+
+  async sendControl(type: number, payload: Buffer = Buffer.alloc(0)): Promise<void> {
+    if (!this.connected) throw new Error("EasyMP session is not connected");
+    await this.writeControl(this.control!, type, this.timeout, payload);
+  }
+
+  private async open(): Promise<void> {
+    this.closeResources();
+    const interval = this.options.keepAliveInterval ?? 5_000;
+    if (!Number.isFinite(interval) || interval <= 0) {
+      throw new RangeError("keepAliveInterval must be greater than zero");
+    }
+
+    let acceptConnection: ((socket: net.Socket) => void) | undefined;
+    const server = net.createServer((socket) => {
+      if (socket.remoteAddress !== this.host || !acceptConnection) {
+        socket.destroy();
+        return;
+      }
+
+      const accept = acceptConnection;
+      acceptConnection = undefined;
+      this.control = socket;
+      socket.on("error", () => socket.destroy());
+      socket.once("close", () => {
+        if (this.control === socket && this.ready) this.closeResources();
+      });
+      accept(socket);
+    });
+    this.server = server;
 
     try {
-      this.server = net.createServer();
       await withTimeout(
         new Promise<void>((resolve, reject) => {
-          this.server!.once("error", reject);
-          this.server!.listen(this.port, this.localAddress, resolve);
+          server.once("error", reject);
+          server.listen(this.port, this.localAddress, resolve);
         }),
         this.timeout,
         `Timed out listening on ${this.localAddress}:${this.port}`,
       );
 
-      this.udp = dgram.createSocket({ type: "udp4", reuseAddr: true });
+      const udp = dgram.createSocket("udp4");
+      this.udp = udp;
       await withTimeout(
         new Promise<void>((resolve, reject) => {
-          this.udp!.once("error", reject);
-          this.udp!.bind(this.port, this.localAddress, resolve);
+          udp.once("error", reject);
+          udp.bind(this.port, this.localAddress, resolve);
         }),
         this.timeout,
         `Timed out binding UDP ${this.localAddress}:${this.port}`,
       );
 
-      const discovery = await this.discover();
-      const projectorId = discovery?.subarray(70, 74);
+      const projectorId = await this.discover(udp);
 
-      const connectionPromise = withTimeout(
+      const connectPacket = createConnectPacket(this.localAddress, this.host, projectorId);
+      const control = await withTimeout(
         new Promise<net.Socket>((resolve, reject) => {
-          this.server!.once("connection", resolve);
-          this.server!.once("error", reject);
+          acceptConnection = resolve;
+          server.once("error", reject);
+          void this.sendDatagram(udp, connectPacket, this.host).catch(reject);
         }),
         this.timeout,
         `Projector ${this.host} did not connect back to ${this.localAddress}:${this.port}`,
       );
+      const greeting = readControlReply(control, 0x05, this.timeout);
+      readControlPackets(control);
+      await greeting;
+      await this.writeControl(control, 0x0a, this.timeout);
+      if (control.destroyed) throw new Error("EasyMP control socket closed");
 
-      await new Promise<void>((resolve, reject) => {
-        this.udp!.send(
-          createConnectPacket(this.localAddress, this.host, projectorId),
-          this.port,
-          this.host,
-          (error) => error ? reject(error) : resolve(),
-        );
-      });
-
-      const control = await connectionPromise;
-      this.control = control;
-      control.on("error", () => this.stopKeepAlive());
-      control.on("close", () => this.stopKeepAlive());
-
-      const response = await this.readOnce(control);
-      if (response.length < EEMP_MAGIC.length || !response.subarray(0, 8).equals(EEMP_MAGIC)) {
-        throw new Error(`Unexpected EasyMP response: ${response.toString("hex")}`);
-      }
-
-      await this.sendControl(0x0a);
-
-      const interval = this.options.keepAliveInterval ?? 5_000;
-      if (!Number.isFinite(interval) || interval <= 0) {
-        throw new RangeError("keepAliveInterval must be greater than zero");
-      }
-
+      this.ready = true;
       this.keepAlive = setInterval(() => {
-        if (!this.control || this.control.destroyed) return;
-        this.control.write(createControlPacket(this.localAddress, 0x0a));
+        // If a stalled write times out, close the session instead of queueing more heartbeats.
+        if (control.writableLength === 0) {
+          void this.writeControl(control, 0x0a, this.timeout).catch(() => control.destroy());
+        }
       }, interval);
     } catch (error) {
-      await this.closeResources();
+      this.closeResources();
       throw error;
     } finally {
-      this.connecting = false;
+      acceptConnection = undefined;
     }
   }
 
-  async disconnect(): Promise<void> {
+  private async close(): Promise<void> {
+    await this.connecting?.catch(() => undefined);
     this.stopKeepAlive();
 
-    if (this.control && !this.control.destroyed) {
-      await withTimeout(
-        new Promise<void>((resolve) => {
-          this.control!.write(
-            createControlPacket(this.localAddress, 0x06),
-            () => resolve(),
-          );
-        }),
-        Math.min(this.timeout, 1_000),
-        "Timed out sending the EasyMP disconnect packet",
-      ).catch(() => undefined);
-      await delay(100);
-    }
-
-    await this.closeResources();
-  }
-
-  async sendControl(type: number, payload: Buffer = Buffer.alloc(0)): Promise<void> {
     const control = this.control;
-    if (!control || control.destroyed) {
-      throw new Error("EasyMP session is not connected");
+    this.ready = false;
+    try {
+      if (control && !control.destroyed) {
+        const timeout = Math.min(this.timeout, 1_000);
+        await Promise.all([
+          readControlReply(control, 0x07, timeout),
+          this.writeControl(control, 0x06, timeout),
+        ]).catch(() => undefined);
+      }
+    } finally {
+      this.closeResources();
     }
-
-    await withTimeout(
-      new Promise<void>((resolve, reject) => {
-        control.write(
-          createControlPacket(this.localAddress, type, payload),
-          (error) => error ? reject(error) : resolve(),
-        );
-      }),
-      this.timeout,
-      "Timed out sending EasyMP control data",
-    );
   }
 
-  private async discover(): Promise<Buffer | undefined> {
-    const udp = this.udp!;
-    udp.setBroadcast(true);
-    const subnetBroadcast = this.localAddress.replace(/\d+$/, "255");
+  private async discover(udp: dgram.Socket): Promise<Buffer | undefined> {
+    const direct = createDiscoveryPacket(this.localAddress, true);
+    const broadcast = createDiscoveryPacket(this.localAddress);
+    const destinations = new Set<string>();
+    try {
+      udp.setBroadcast(true);
+      const directedBroadcast = subnetBroadcast(this.localAddress);
+      if (directedBroadcast) destinations.add(directedBroadcast);
+      destinations.add("255.255.255.255");
+    } catch {
+      // Broadcast may be unavailable on this interface even when unicast works.
+    }
     let onMessage: ((message: Buffer, remote: dgram.RemoteInfo) => void) | undefined;
+    let retry: ReturnType<typeof setInterval> | undefined;
 
-    const response = new Promise<Buffer>((resolve) => {
+    const response = new Promise<Buffer>((resolve, reject) => {
       onMessage = (message, remote) => {
         if (
           remote.address === this.host
           && message.length >= 74
           && message.subarray(0, 8).equals(EEMP_MAGIC)
-          && message[12] === 0x03
+          && message.readUInt32LE(12) === 0x03
+          && message.readUInt32LE(16) === message.length - EEMP_HEADER_SIZE
         ) {
-          resolve(message);
+          if (retry !== undefined) clearInterval(retry);
+          resolve(message.subarray(70, 74));
         }
       };
       udp.on("message", onMessage);
+      void this.sendDatagram(udp, direct, this.host).catch(reject);
+
+      let attempts = 1;
+      retry = setInterval(() => {
+        void this.sendDatagram(udp, direct, this.host).catch(reject);
+        for (const destination of destinations) {
+          void this.sendDatagram(udp, broadcast, destination).catch(() => undefined);
+        }
+        attempts += 1;
+        if (attempts >= 7) clearInterval(retry);
+      }, 100);
     });
 
     try {
-      for (let attempt = 0; attempt < 7; attempt += 1) {
-        for (const [destination, type] of [
-          [this.host, 0x02],
-          [subnetBroadcast, 0x01],
-          ["255.255.255.255", 0x01],
-        ] as const) {
-          await new Promise<void>((resolve, reject) => {
-            udp.send(
-              createDiscoveryPacket(this.localAddress, type === 0x02),
-              this.port,
-              destination,
-              (error) => error ? reject(error) : resolve(),
-            );
-          });
-        }
-        if (attempt < 6) await delay(100);
-      }
-
       return await withTimeout(
         response,
         Math.min(this.timeout, 2_000),
         `Projector ${this.host} did not answer EasyMP discovery`,
       ).catch(() => undefined);
     } finally {
+      if (retry !== undefined) clearInterval(retry);
       if (onMessage) udp.off("message", onMessage);
     }
   }
 
-  private readOnce(socket: net.Socket): Promise<Buffer> {
+  private sendDatagram(udp: dgram.Socket, packet: Buffer, destination: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      udp.send(packet, this.port, destination, (error) => error ? reject(error) : resolve());
+    });
+  }
+
+  private writeControl(socket: net.Socket, type: number, timeout: number, payload?: Buffer): Promise<void> {
+    const packet = createControlPacket(this.localAddress, type, payload);
     return withTimeout(
-      new Promise<Buffer>((resolve, reject) => {
-        socket.once("data", resolve);
-        socket.once("error", reject);
-        socket.once("end", () => reject(new Error("EasyMP control socket closed")));
+      new Promise<void>((resolve, reject) => {
+        socket.write(packet, (error) => error ? reject(error) : resolve());
       }),
-      this.timeout,
-      "Timed out waiting for the EasyMP control response",
+      timeout,
+      "Timed out sending EasyMP control data",
     );
   }
 
@@ -297,24 +319,80 @@ export class EasyMPSession {
     }
   }
 
-  private async closeResources(): Promise<void> {
+  private closeResources(): void {
+    this.ready = false;
     this.stopKeepAlive();
     this.control?.destroy();
     this.control = undefined;
 
-    if (this.udp) {
-      try {
-        this.udp.close();
-      } catch {
-        // The socket may not have reached the bound state.
-      }
-      this.udp = undefined;
+    const udp = this.udp;
+    this.udp = undefined;
+    try {
+      udp?.close();
+    } catch {
+      // A bind error can close the socket before cleanup.
     }
 
-    const server = this.server;
+    this.server?.close();
     this.server = undefined;
-    if (server?.listening) {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+function readControlPackets(socket: net.Socket): void {
+  let header: Buffer | null = null;
+  socket.on("readable", () => {
+    while (true) {
+      header ??= socket.read(EEMP_HEADER_SIZE) as Buffer | null;
+      if (!header) return;
+      if (header.length !== EEMP_HEADER_SIZE || !header.subarray(0, 8).equals(EEMP_MAGIC)) {
+        socket.destroy(new Error("Invalid EasyMP control packet header"));
+        return;
+      }
+
+      const payloadLength = header.readUInt32LE(16);
+      if (payloadLength > 65_535) {
+        socket.destroy(new Error("Invalid EasyMP control packet length"));
+        return;
+      }
+      if (payloadLength > 0) {
+        const payload = socket.read(payloadLength) as Buffer | null;
+        if (!payload) return;
+        if (payload.length !== payloadLength) {
+          socket.destroy(new Error("Truncated EasyMP control packet"));
+          return;
+        }
+      }
+
+      socket.emit("eempReply", header.readUInt32LE(12));
+      header = null;
     }
+  });
+}
+
+async function readControlReply(socket: net.Socket, type: number, timeout: number): Promise<void> {
+  let cleanup: (() => void) | undefined;
+  const reply = new Promise<void>((resolve, reject) => {
+    const onReply = (received: number) => {
+      if (received === type) resolve();
+    };
+    const onClose = () => reject(new Error("EasyMP control socket closed"));
+
+    socket.on("eempReply", onReply);
+    socket.once("error", reject);
+    socket.once("end", onClose);
+    socket.once("close", onClose);
+    cleanup = () => {
+      socket.off("eempReply", onReply);
+      socket.off("error", reject);
+      socket.off("end", onClose);
+      socket.off("close", onClose);
+    };
+    if (socket.destroyed || socket.readableEnded) onClose();
+  });
+
+  try {
+    await withTimeout(reply, timeout, `Timed out waiting for EasyMP control reply 0x${type.toString(16)}`);
+  } finally {
+    cleanup?.();
   }
 }

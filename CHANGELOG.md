@@ -7,6 +7,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
+### Added
+
+- Optional `fullFrameInterval` for resending the full image on a subsequent `display.update()`.
+- Wireshark analysis comparing the EMP-1715 session with LibreMP's iProjection capture.
+
+### Fixed
+
+- Stop discovery retries as soon as the projector responds and calculate the subnet broadcast address from the interface netmask.
+- Reassemble fragmented TCP control packets, accept callbacks from the configured projector, and wait for the projector's disconnect acknowledgement.
+- Serialize display connection and frame operations and bind the video channel to the same local interface as the control channel.
+
 ## [0.2.0] - 2026-09-24
 
 ### Added
@@ -32,6 +45,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Full-frame image tiling and changed-tile updates.
 - Bun and Node.js ESM package builds with TypeScript declarations.
 
-[Unreleased]: https://github.com/okakatsuo/easymp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/okakatsuo/easymp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/okakatsuo/easymp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/okakatsuo/easymp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/okakatsuo/easymp/releases/tag/v0.1.0

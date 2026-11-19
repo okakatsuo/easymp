@@ -169,7 +169,7 @@ export class EasyMPMovie {
       await delay(300);
       signal.throwIfAborted();
 
-      const video = new EasyMPVideo({ host: this.host, timeout });
+      const video = new EasyMPVideo({ host: this.host, localAddress, timeout });
       this.video = video;
       await video.connect();
 

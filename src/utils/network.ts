@@ -56,3 +56,20 @@ export function sameSubnet(target: Buffer, address: Buffer, netmask: Buffer): bo
   }
   return true;
 }
+
+export function subnetBroadcast(localAddress: string): string | undefined {
+  for (const addresses of Object.values(networkInterfaces())) {
+    const address = addresses?.find((entry) =>
+      entry.family === "IPv4" && !entry.internal && entry.address === localAddress
+    );
+    if (!address) continue;
+    const ip = ipv4ToBuffer(address.address).readUInt32BE();
+    const mask = ipv4ToBuffer(address.netmask).readUInt32BE();
+    // A /31 or /32 network has no directed broadcast address.
+    if (mask >= 0xfffffffe) return undefined;
+    const broadcast = Buffer.alloc(4);
+    broadcast.writeUInt32BE((ip | ~mask) >>> 0);
+    return broadcast.join(".");
+  }
+  return undefined;
+}

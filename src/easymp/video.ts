@@ -6,6 +6,7 @@ export const EASYMP_VIDEO_PORT = 3621;
 
 export interface EasyMPVideoOptions {
   host: string;
+  localAddress?: string;
   port?: number;
   timeout?: number;
 }
@@ -14,6 +15,7 @@ export class EasyMPVideo {
   private socket?: net.Socket;
 
   readonly host: string;
+  readonly localAddress?: string;
   readonly port: number;
   readonly timeout: number;
 
@@ -23,6 +25,7 @@ export class EasyMPVideo {
       : hostOrOptions;
 
     this.host = options.host;
+    this.localAddress = options.localAddress;
     this.port = options.port ?? EASYMP_VIDEO_PORT;
     this.timeout = options.timeout ?? 5_000;
   }
@@ -34,7 +37,11 @@ export class EasyMPVideo {
   async connect(): Promise<void> {
     if (this.connected) return;
 
-    const socket = net.createConnection({ host: this.host, port: this.port });
+    const socket = net.createConnection({
+      host: this.host,
+      port: this.port,
+      localAddress: this.localAddress,
+    });
 
     try {
       await withTimeout(
